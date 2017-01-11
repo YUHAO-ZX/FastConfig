@@ -1,11 +1,12 @@
 package com.fastconfig.core.spi;
-
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.ByteBuffer;
 import java.nio.channels.*;
 import java.util.Iterator;
+import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.LinkedBlockingDeque;
 
 /**
  * Created by xinz on 2017/1/10.
@@ -13,12 +14,17 @@ import java.util.Iterator;
 public class NIOServer {
     private static final int port = 8908;
     private ByteBuffer buffer = ByteBuffer.allocateDirect(1024);
-
+    RequestsConsumer consumer ;
+    private BlockingDeque requestQueue = new LinkedBlockingDeque();
     public static void main(String[] args) {
         NIOServer server = new NIOServer();
         server.init();
     }
+
     public void init(){
+        consumer = new RequestsConsumer(requestQueue);
+        consumer.start();
+
         /*
         1.建立NIO服务
          */
@@ -66,42 +72,15 @@ public class NIOServer {
         if (channel == null) {
             return; // could happen
         }
-// Set the new channel nonblocking
+        // Set the new channel nonblocking
         channel.configureBlocking(false);
-// Register it with the selector
+        // Register it with the selector
         channel.register(selector, ops);
     }
 
     protected void readDataFromSocket(SelectionKey key) throws Exception {
-        SocketChannel socketChannel = (SocketChannel) key.channel();
-        int count;
-        buffer.clear(); // Empty buffer
-// Loop while data is available; channel is nonblocking
-        /** socketChannel.read(buffer) 多次write可能合并一起读入到buffer中**/
-        while ((count = socketChannel.read(buffer)) > 0) {
-            buffer.flip(); // Make buffer readable
-// Send the data; don't assume it goes all at once
-            StringBuilder sb = new StringBuilder();
-            byte[] continer = new byte[1000];
-//            buffer.get(continer);
-            int i=0;
-            while (buffer.hasRemaining()) {
-                continer[i++] = buffer.get();
-//                socketChannel.write(buffer);
-            }
-            sb.append(new String(continer));
-            System.out.println("recieve finish:"+sb);
-// WARNING: the above loop is evil. Because
-// it's writing back to the same nonblocking
-// channel it read the data from, this code can
-// potentially spin in a busy loop. In real life
-// you'd do something more useful than this.
-            buffer.clear(); // Empty buffer
-        }
-        if (count < 0) {
-// Close channel on EOF, invalidates the key
-            socketChannel.close();
-        }
+        requestQueue.add(key);
+        consumer.notifyOne();
     }
 
     private void sayHello(SocketChannel channel) throws Exception {
